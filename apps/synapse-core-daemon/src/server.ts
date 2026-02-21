@@ -31,8 +31,6 @@ const uiBridge = new MockUiExecutorBridge();
 // Connected WebSocket clients (Logi plugin + config UI)
 const clients = new Set<WebSocket>();
 
-let inboundEventQueue: Promise<void> = Promise.resolve();
-
 function broadcast(payload: unknown): void {
   const msg = JSON.stringify(payload);
   for (const client of clients) {
@@ -142,6 +140,8 @@ export function buildServer() {
       const socket = connection.socket;
       clients.add(socket);
       logger.info({ clientCount: clients.size }, 'client connected');
+
+      let inboundEventQueue: Promise<void> = Promise.resolve();
 
       // Send current state on connect
       socket.send(
