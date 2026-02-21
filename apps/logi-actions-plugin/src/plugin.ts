@@ -64,13 +64,31 @@ export class LogiActionsPlugin {
   /** Connect to synapse-core-daemon WebSocket */
   connect(): void {
     if (this.destroyed) return;
-    this.ws = this.wsFactory(DAEMON_WS_URL);
 
-    this.ws.onopen = () => {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    const ws = this.wsFactory(DAEMON_WS_URL);
+    const previousWs = this.ws;
+    this.ws = ws;
+    previousWs?.close();
+
+    ws.onopen = () => {
+      if (ws !== this.ws) return;
+
+      if (this.reconnectTimer !== null) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+
       this.state = { ...this.state, connected: true, reconnectAttempts: 0 };
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (ws !== this.ws) return;
+
       try {
         const msg = JSON.parse(event.data) as { type: string; state?: SynapseState };
         if (msg.type === 'STATE_UPDATE' && msg.state) {
@@ -81,12 +99,16 @@ export class LogiActionsPlugin {
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (ws !== this.ws) return;
+
       this.state = { ...this.state, connected: false };
       this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
+      if (ws !== this.ws) return;
+
       // Dead-man switch: on error, ensure we're flagged disconnected
       this.state = { ...this.state, connected: false };
     };
@@ -108,16 +130,19 @@ export class LogiActionsPlugin {
 
   private scheduleReconnect(): void {
     if (this.destroyed) return;
+    if (this.reconnectTimer !== null) return;
     if (this.state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return;
 
     this.reconnectTimer = setTimeout(() => {
-      if (!this.destroyed) {
-        this.state = {
-          ...this.state,
-          reconnectAttempts: this.state.reconnectAttempts + 1,
-        };
-        this.connect();
-      }
+      this.reconnectTimer = null;
+      if (this.destroyed) return;
+
+      this.state = {
+        ...this.state,
+        reconnectAttempts: this.state.reconnectAttempts + 1,
+      };
+
+      this.connect();
     }, RECONNECT_DELAY_MS);
   }
 

@@ -31,6 +31,8 @@ const uiBridge = new MockUiExecutorBridge();
 // Connected WebSocket clients (Logi plugin + config UI)
 const clients = new Set<WebSocket>();
 
+let inboundEventQueue: Promise<void> = Promise.resolve();
+
 function broadcast(payload: unknown): void {
   const msg = JSON.stringify(payload);
   for (const client of clients) {
@@ -151,17 +153,23 @@ export function buildServer() {
         }),
       );
 
-      connection.on('message', async (raw) => {
-        try {
-          const payload = JSON.parse(raw.toString()) as unknown;
-          const event = LogiHardwareEventSchema.parse(payload);
-          await processHardwareEvent(event);
-        } catch (err) {
-          logger.warn({ err }, 'invalid message received');
-          socket.send(
-            JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
-          );
-        }
+      connection.on('message', (raw) => {
+        inboundEventQueue = inboundEventQueue
+          .then(async () => {
+            const payload = JSON.parse(raw.toString()) as unknown;
+            const event = LogiHardwareEventSchema.parse(payload);
+            await processHardwareEvent(event);
+          })
+          .catch((err) => {
+            logger.warn({ err }, 'invalid message received');
+            try {
+              socket.send(
+                JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
+              );
+            } catch {
+              // ignore
+            }
+          });
       });
 
       connection.on('close', () => {
