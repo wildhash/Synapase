@@ -76,19 +76,17 @@ export class LogiActionsPlugin {
     previousWs?.close();
 
     ws.onopen = () => {
-      if (ws !== this.ws) return;
+      if (this.destroyed || this.ws !== ws) return;
 
       if (this.reconnectTimer !== null) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
-
       this.state = { ...this.state, connected: true, reconnectAttempts: 0 };
     };
 
     ws.onmessage = (event) => {
-      if (ws !== this.ws) return;
-
+      if (this.destroyed || this.ws !== ws) return;
       try {
         const msg = JSON.parse(event.data) as { type: string; state?: SynapseState };
         if (msg.type === 'STATE_UPDATE' && msg.state) {
@@ -100,15 +98,13 @@ export class LogiActionsPlugin {
     };
 
     ws.onclose = () => {
-      if (ws !== this.ws) return;
-
+      if (this.destroyed || this.ws !== ws) return;
       this.state = { ...this.state, connected: false };
       this.scheduleReconnect();
     };
 
     ws.onerror = () => {
-      if (ws !== this.ws) return;
-
+      if (this.destroyed || this.ws !== ws) return;
       // Dead-man switch: on error, ensure we're flagged disconnected
       this.state = { ...this.state, connected: false };
     };
@@ -137,11 +133,13 @@ export class LogiActionsPlugin {
       this.reconnectTimer = null;
       if (this.destroyed) return;
 
+      const nextAttempts = this.state.reconnectAttempts + 1;
+      if (nextAttempts > MAX_RECONNECT_ATTEMPTS) return;
+
       this.state = {
         ...this.state,
-        reconnectAttempts: this.state.reconnectAttempts + 1,
+        reconnectAttempts: nextAttempts,
       };
-
       this.connect();
     }, RECONNECT_DELAY_MS);
   }
@@ -155,5 +153,6 @@ export class LogiActionsPlugin {
     }
     this.ws?.close();
     this.ws = null;
+    this.state = { ...this.state, connected: false, reconnectAttempts: 0 };
   }
 }
