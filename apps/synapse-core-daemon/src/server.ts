@@ -1,7 +1,8 @@
 import Fastify from 'fastify';
+import type { FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import type { SocketStream } from '@fastify/websocket';
-import type { WebSocket } from 'ws';
+import { WebSocket } from 'ws';
 import {
   LogiHardwareEventSchema,
   mapHardwareEventToSynapseType,
@@ -34,6 +35,11 @@ const clients = new Set<WebSocket>();
 function broadcast(payload: unknown): void {
   const msg = JSON.stringify(payload);
   for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) {
+      clients.delete(client);
+      continue;
+    }
+
     try {
       client.send(msg);
     } catch {
@@ -136,10 +142,30 @@ export function buildServer() {
 
   app.register(async (fastify) => {
     /** Logitech plugin and config UI connect here */
-    fastify.get('/ws', { websocket: true }, (connection: SocketStream) => {
+    fastify.get('/ws', { websocket: true }, (connection: SocketStream, req: FastifyRequest) => {
       const socket = connection.socket;
+
+      const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+      const role = url.searchParams.get('role') ?? 'viewer';
+      const token = url.searchParams.get('token');
+      const configuredToken = process.env['SYNAPSE_WS_TOKEN'];
+      const isTokenConfigured = Boolean(configuredToken);
+      const isPlugin = role === 'plugin';
+      const canSendEvents = isPlugin && (!isTokenConfigured || token === configuredToken);
+
+      if (isPlugin && isTokenConfigured && !canSendEvents) {
+        logger.warn('plugin connection rejected: invalid SYNAPSE_WS_TOKEN');
+        try {
+          socket.send(JSON.stringify({ type: 'ERROR', message: 'Invalid token' }));
+        } catch {
+          // ignore
+        }
+        socket.close();
+        return;
+      }
+
       clients.add(socket);
-      logger.info({ clientCount: clients.size }, 'client connected');
+      logger.info({ clientCount: clients.size, role }, 'client connected');
 
       let inboundEventQueue: Promise<void> = Promise.resolve();
       let isClosed = false;
@@ -154,45 +180,47 @@ export function buildServer() {
         }),
       );
 
-      connection.on('message', (raw) => {
-        if (isClosed) return;
+      if (canSendEvents) {
+        connection.on('message', (raw) => {
+          if (isClosed) return;
 
-        let event: LogiHardwareEvent;
-        try {
-          const payload = JSON.parse(raw.toString()) as unknown;
-          event = LogiHardwareEventSchema.parse(payload);
-        } catch (err) {
-          logger.warn({ err }, 'invalid message received');
+          let event: LogiHardwareEvent;
           try {
-            socket.send(
-              JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
-            );
-          } catch {
-            // ignore
-          }
-          return;
-        }
-
-        inboundEventQueue = inboundEventQueue
-          .then(() => processHardwareEvent(event))
-          .catch((err) => {
-            logger.error({ err }, 'failed to process hardware event');
+            const payload = JSON.parse(raw.toString()) as unknown;
+            event = LogiHardwareEventSchema.parse(payload);
+          } catch (err) {
+            logger.warn({ err }, 'invalid message received');
             try {
               socket.send(
-                JSON.stringify({ type: 'ERROR', message: 'Failed to process hardware event' }),
+                JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
               );
             } catch {
               // ignore
             }
-          });
-      });
+            return;
+          }
+
+          inboundEventQueue = inboundEventQueue
+            .then(() => processHardwareEvent(event))
+            .catch((err) => {
+              logger.error({ err }, 'failed to process hardware event');
+              try {
+                socket.send(
+                  JSON.stringify({ type: 'ERROR', message: 'Failed to process hardware event' }),
+                );
+              } catch {
+                // ignore
+              }
+            });
+        });
+      }
 
       connection.on('close', () => {
         isClosed = true;
         inboundEventQueue = Promise.resolve();
 
         clients.delete(socket);
-        logger.info({ clientCount: clients.size }, 'client disconnected');
+        logger.info({ clientCount: clients.size, role }, 'client disconnected');
 
         // Dead-man switch: if all clients disconnected, release clutch
         if (clients.size === 0 && machine.getData().isClutchEngaged) {
