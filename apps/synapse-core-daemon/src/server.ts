@@ -142,6 +142,7 @@ export function buildServer() {
       logger.info({ clientCount: clients.size }, 'client connected');
 
       let inboundEventQueue: Promise<void> = Promise.resolve();
+      let isClosed = false;
 
       // Send current state on connect
       socket.send(
@@ -154,17 +155,31 @@ export function buildServer() {
       );
 
       connection.on('message', (raw) => {
+        if (isClosed) return;
+
+        let event: LogiHardwareEvent;
+        try {
+          const payload = JSON.parse(raw.toString()) as unknown;
+          event = LogiHardwareEventSchema.parse(payload);
+        } catch (err) {
+          logger.warn({ err }, 'invalid message received');
+          try {
+            socket.send(
+              JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
+            );
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
         inboundEventQueue = inboundEventQueue
-          .then(async () => {
-            const payload = JSON.parse(raw.toString()) as unknown;
-            const event = LogiHardwareEventSchema.parse(payload);
-            await processHardwareEvent(event);
-          })
+          .then(() => processHardwareEvent(event))
           .catch((err) => {
-            logger.warn({ err }, 'invalid message received');
+            logger.error({ err }, 'failed to process hardware event');
             try {
               socket.send(
-                JSON.stringify({ type: 'ERROR', message: 'Invalid hardware event payload' }),
+                JSON.stringify({ type: 'ERROR', message: 'Failed to process hardware event' }),
               );
             } catch {
               // ignore
@@ -173,6 +188,9 @@ export function buildServer() {
       });
 
       connection.on('close', () => {
+        isClosed = true;
+        inboundEventQueue = Promise.resolve();
+
         clients.delete(socket);
         logger.info({ clientCount: clients.size }, 'client disconnected');
 
