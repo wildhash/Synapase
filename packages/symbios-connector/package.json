@@ -1,0 +1,31 @@
+{
+  "name": "@synapse/symbios-connector",
+  "version": "0.1.0",
+  "description": "Bridge to the SymbiOS multi-LLM kernel (@tinywindow/symbios)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "jest --testPathPattern=src",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@synapse/hardware-events": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.3",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.17.0"
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "manifestVersion": "1.0",
+  "id": "com.tinywindow.project-synapse",
+  "name": "Project Synapse",
+  "version": "0.1.0",
+  "description": "Physical control layer for deterministic UI agents and multi-LLM orchestration",
+  "author": "Tiny Window",
+  "logo": "assets/synapse-logo.png",
+  "websocket": {
+    "url": "ws://localhost:4040/ws"
+  },
+  "devices": [
+    {
+      "id": "MX_MASTER_4",
+      "name": "MX Master 4",
+      "components": [
+        {
+          "id": "ACTIONS_RING",
+          "type": "ring",
+          "events": ["PRESS", "RELEASE"]
+        }
+      ]
+    },
+    {
+      "id": "MX_CREATIVE_CONSOLE",
+      "name": "MX Creative Console",
+      "components": [
+        {
+          "id": "DIAL_A",
+          "type": "dial",
+          "events": ["ROTATE"]
+        },
+        {
+          "id": "DIAL_B",
+          "type": "dial",
+          "events": ["ROTATE"]
+        },
+        {
+          "id": "KEYPAD",
+          "type": "keypad",
+          "keys": [1, 2, 3, 4],
+          "events": ["PRESS", "RELEASE", "TAP"]
+        }
+      ]
+    }
+  ]
+}
