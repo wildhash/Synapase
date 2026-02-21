@@ -83,6 +83,22 @@ project-synapse/
 npm install -g pnpm
 ```
 
+### Platform notes (Windows, macOS, Codespaces)
+
+- **Windows (primary dev target):** this is what most of the team uses day-to-day.
+- **macOS:** supported for local dev and for running Logitech Options+ (for loading the plugin).
+- **GitHub Codespaces:** great for contributing when local resources are limited. You can build/test everything in Codespaces, but **Logitech Options+ runs on your local machine**, so end-to-end hardware testing typically requires running the daemon locally (or pointing the plugin at your forwarded Codespaces port).
+
+If you want to run the daemon somewhere other than `ws://localhost:4040/ws`, set:
+
+```bash
+# Where the plugin should connect
+export SYNAPSE_DAEMON_URL='ws://127.0.0.1:4040/ws'
+
+# Optional shared secret (daemon + plugin must match)
+export SYNAPSE_WS_TOKEN='dev-secret'
+```
+
 ---
 
 ## Build & Test
