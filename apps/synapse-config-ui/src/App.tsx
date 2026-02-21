@@ -21,17 +21,48 @@ function App() {
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const destroyedRef = useRef(false);
 
   const connect = useCallback(() => {
+    if (destroyedRef.current) return;
+
+    if (reconnectTimeoutRef.current !== null) {
+      window.clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    const priorWs = wsRef.current;
+    if (priorWs) {
+      priorWs.onopen = null;
+      priorWs.onclose = null;
+      priorWs.onerror = null;
+      priorWs.onmessage = null;
+      priorWs.close();
+    }
+
     const ws = new WebSocket(DAEMON_WS_URL);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => {
-      setConnected(false);
-      setTimeout(connect, 2_000);
+    ws.onopen = () => {
+      if (destroyedRef.current) {
+        ws.close();
+        return;
+      }
+      setConnected(true);
     };
-    ws.onerror = () => setConnected(false);
+    ws.onclose = () => {
+      if (destroyedRef.current) return;
+      setConnected(false);
+
+      if (reconnectTimeoutRef.current === null) {
+        reconnectTimeoutRef.current = window.setTimeout(connect, 2_000);
+      }
+    };
+    ws.onerror = () => {
+      if (destroyedRef.current) return;
+      setConnected(false);
+    };
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data as string) as DaemonMessage;
@@ -48,7 +79,14 @@ function App() {
 
   useEffect(() => {
     connect();
-    return () => wsRef.current?.close();
+    return () => {
+      destroyedRef.current = true;
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      wsRef.current?.close();
+    };
   }, [connect]);
 
   return (
