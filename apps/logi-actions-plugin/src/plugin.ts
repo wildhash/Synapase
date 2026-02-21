@@ -6,7 +6,23 @@ import {
 
 // ─── Plugin Config ────────────────────────────────────────────────────────────
 
-const DAEMON_WS_URL = process.env['SYNAPSE_DAEMON_URL'] ?? 'ws://localhost:4040/ws';
+function buildDaemonWsUrl(): string {
+  const rawUrl = process.env['SYNAPSE_DAEMON_URL'] ?? 'ws://localhost:4040/ws';
+  const token = process.env['SYNAPSE_WS_TOKEN'];
+
+  try {
+    const url = new URL(rawUrl);
+    url.searchParams.set('role', 'plugin');
+    if (token) url.searchParams.set('token', token);
+    return url.toString();
+  } catch {
+    const query = new URLSearchParams({ role: 'plugin' });
+    if (token) query.set('token', token);
+
+    const separator = rawUrl.includes('?') ? '&' : '?';
+    return `${rawUrl}${separator}${query.toString()}`;
+  }
+}
 const RECONNECT_DELAY_MS = 2_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
@@ -70,10 +86,17 @@ export class LogiActionsPlugin {
       this.reconnectTimer = null;
     }
 
-    const ws = this.wsFactory(DAEMON_WS_URL);
+    const ws = this.wsFactory(buildDaemonWsUrl());
     const previousWs = this.ws;
     this.ws = ws;
-    previousWs?.close();
+
+    if (previousWs) {
+      previousWs.onopen = null;
+      previousWs.onmessage = null;
+      previousWs.onclose = null;
+      previousWs.onerror = null;
+      previousWs.close();
+    }
 
     ws.onopen = () => {
       if (this.destroyed || this.ws !== ws) return;
