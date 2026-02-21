@@ -14,7 +14,6 @@ export type SynapseMachineEvent =
   | { type: 'VOICE_READY' }
   | { type: 'AGENT_READY' }
   | { type: 'DIAL_COMPUTE'; delta: number }
-  | { type: 'DIAL_CONTEXT'; delta: number }
   | { type: 'KEYPAD_SWITCH'; persona: 'CODER' | 'NAVIGATOR' | 'RESEARCHER' };
 
 // ─── Synapse State Machine (no external XState dep for core logic) ─────────────
@@ -68,9 +67,6 @@ export class SynapseMachine {
         break;
       case 'DIAL_COMPUTE':
         this.applyDialCompute(event.delta);
-        break;
-      case 'DIAL_CONTEXT':
-        // handled by KernelMixer, no state transition needed
         break;
       case 'KEYPAD_SWITCH':
         this.data = { ...this.data, activeAgentContext: event.persona };
