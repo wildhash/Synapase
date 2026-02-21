@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "description": "Difficult AI (LiveKit/Deepgram) WebSocket stream handlers",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./src/index.ts"
     }
   },
   "scripts": {
