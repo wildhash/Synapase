@@ -314,7 +314,7 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
 
   useEffect(() => {
     if (!enabled) {
-      destroyedRef.current = false;
+      destroyedRef.current = true;
 
       if (reconnectTimeoutRef.current !== null) {
         window.clearTimeout(reconnectTimeoutRef.current);
