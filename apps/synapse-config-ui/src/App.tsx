@@ -122,6 +122,14 @@ function useDemoState(enabled: boolean): DaemonState {
     }
 
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+
       if (e.key === ' ') {
         e.preventDefault();
         toggleClutch();
@@ -181,8 +189,9 @@ function WaveformCanvas(props: {
       canvas.height = Math.max(1, Math.floor(rect.height * dpr));
     };
 
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
+    const ro =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
+    ro?.observe(canvas);
     resize();
 
     const drawFrame = (nowMs: number) => {
@@ -226,7 +235,7 @@ function WaveformCanvas(props: {
     return () => {
       stopped = true;
       window.cancelAnimationFrame(raf);
-      ro.disconnect();
+      ro?.disconnect();
     };
   }, [active, intensity]);
 
@@ -243,7 +252,10 @@ function Meter(props: { value: number }): JSX.Element {
 }
 
 function App(): JSX.Element {
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+  const params = useMemo(() => {
+    if (typeof window === 'undefined') return new URLSearchParams('');
+    return new URLSearchParams(window.location.search);
+  }, []);
   const demoEnabled = params.get('demo') === '1';
 
   const daemon = useDaemonWs({ enabled: !demoEnabled });
@@ -281,7 +293,7 @@ function App(): JSX.Element {
     connected: false,
     osOwner: osOwner,
     synapseType: null as string | null,
-    transcriptTs: null as number | null,
+    transcription: null as TranscriptionResult | null,
     computeMix: computeMix,
     contextTokens: contextTokens,
     persona: persona,
@@ -294,7 +306,7 @@ function App(): JSX.Element {
       connected,
       osOwner,
       synapseType,
-      transcriptTs: transcription?.timestamp ?? null,
+      transcription,
       computeMix,
       contextTokens,
       persona,
@@ -324,7 +336,7 @@ function App(): JSX.Element {
       additions.push({ ts: now, text: `EVENT=${synapseType}` });
     }
 
-    if (transcription?.timestamp && transcription.timestamp !== prior.transcriptTs) {
+    if (transcription && transcription !== prior.transcription) {
       additions.push({
         ts: now,
         text: `VOICE_TRANSCRIPT=${transcription.transcript}`,
@@ -365,8 +377,7 @@ function App(): JSX.Element {
     osOwner,
     persona,
     synapseType,
-    transcription?.timestamp,
-    transcription?.transcript,
+    transcription,
   ]);
 
   const clutchText =

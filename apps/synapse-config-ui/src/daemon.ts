@@ -33,9 +33,15 @@ interface DaemonMessage {
 }
 
 function buildDaemonWsUrl(raw: string): string {
-  const url = new URL(raw);
-  if (!url.searchParams.has('role')) url.searchParams.set('role', 'ui');
-  return url.toString();
+  try {
+    const url = new URL(raw);
+    if (!url.searchParams.has('role')) url.searchParams.set('role', 'ui');
+    return url.toString();
+  } catch {
+    const fallback = new URL('ws://localhost:4040/ws');
+    fallback.searchParams.set('role', 'ui');
+    return fallback.toString();
+  }
 }
 
 function getDaemonWsUrl(): string {
@@ -94,6 +100,13 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
     ws.onclose = () => {
       if (destroyedRef.current) return;
       setConnected(false);
+      setState(null);
+      setKernelConfig(null);
+      setOsControlState(null);
+      setMachineState(null);
+      setSynapseType(null);
+      setLatencyMs(null);
+      setTranscription(null);
 
       if (reconnectTimeoutRef.current === null) {
         reconnectTimeoutRef.current = window.setTimeout(connect, 1_750);
@@ -103,6 +116,13 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
     ws.onerror = () => {
       if (destroyedRef.current) return;
       setConnected(false);
+      setState(null);
+      setKernelConfig(null);
+      setOsControlState(null);
+      setMachineState(null);
+      setSynapseType(null);
+      setLatencyMs(null);
+      setTranscription(null);
     };
 
     ws.onmessage = (event) => {

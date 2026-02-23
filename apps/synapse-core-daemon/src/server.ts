@@ -30,8 +30,14 @@ const kernelMixer = new MockKernelMixer();
 const voicePipeline = new MockVoicePipeline();
 const uiBridge = new MockUiExecutorBridge();
 
-const DEMO_TRANSCRIPTION_ENABLED = process.env['SYNAPSE_DEMO_TRANSCRIPTION'] === '1';
+const DEMO_TRANSCRIPTION_ENABLED =
+  process.env['NODE_ENV'] !== 'production' &&
+  process.env['SYNAPSE_DEMO_TRANSCRIPTION'] === '1';
 let demoTranscriptionTimeouts: Array<NodeJS.Timeout> = [];
+
+if (DEMO_TRANSCRIPTION_ENABLED) {
+  logger.warn('SYNAPSE_DEMO_TRANSCRIPTION enabled: emitting synthetic transcriptions');
+}
 
 function clearDemoTranscription(): void {
   for (const t of demoTranscriptionTimeouts) clearTimeout(t);
