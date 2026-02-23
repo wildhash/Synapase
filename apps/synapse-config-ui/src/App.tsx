@@ -94,7 +94,7 @@ function buildTerminalAdditions(
     });
   }
 
-  if (next.contextTokens && next.contextTokens !== prev.contextTokens) {
+  if (next.contextTokens !== prev.contextTokens) {
     additions.push({
       ts: now,
       text: `KERNEL_CONTEXT_WINDOW=${formatTokens(next.contextTokens)}`,
