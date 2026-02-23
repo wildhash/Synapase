@@ -13,11 +13,12 @@ import {
   dialDeltaToComputeWeight,
   dialDeltaToContextTokens,
 } from '@synapse/symbios-connector';
-import { MockVoicePipeline } from '@synapse/voice-pipeline';
+import { MockVoicePipeline, type TranscriptionResult } from '@synapse/voice-pipeline';
 import {
   MockUiExecutorBridge,
   keypadToPersona,
   type AgentPersona,
+  type OsControlState,
 } from '@synapse/ui-executor-bridge';
 import { SynapseMachine } from './stateMachine.js';
 import { logger } from './logger.js';
@@ -29,8 +30,65 @@ const kernelMixer = new MockKernelMixer();
 const voicePipeline = new MockVoicePipeline();
 const uiBridge = new MockUiExecutorBridge();
 
+const DEMO_TRANSCRIPTION_ENABLED = process.env['SYNAPSE_DEMO_TRANSCRIPTION'] === '1';
+let demoTranscriptionTimeouts: Array<NodeJS.Timeout> = [];
+
+function clearDemoTranscription(): void {
+  for (const t of demoTranscriptionTimeouts) clearTimeout(t);
+  demoTranscriptionTimeouts = [];
+}
+
+function scheduleDemoTranscription(): void {
+  if (!DEMO_TRANSCRIPTION_ENABLED) return;
+  clearDemoTranscription();
+
+  const partialDelayMs = 220;
+  const finalDelayMs = 540;
+  const processingDelayMs = 680;
+
+  demoTranscriptionTimeouts.push(
+    setTimeout(() => {
+      voicePipeline.simulateTranscription('Navigate to the repository and initialize', false);
+    }, partialDelayMs),
+  );
+
+  demoTranscriptionTimeouts.push(
+    setTimeout(() => {
+      voicePipeline.simulateTranscription(
+        'Navigate to the repository and initialize a new branch.',
+        true,
+      );
+    }, finalDelayMs),
+  );
+
+  demoTranscriptionTimeouts.push(
+    setTimeout(() => {
+      if (machine.getState() === 'CLUTCH_ENGAGED') {
+        machine.send({ type: 'VOICE_READY' });
+      }
+    }, processingDelayMs),
+  );
+}
+
 // Connected WebSocket clients (Logi plugin + config UI)
 const clients = new Set<WebSocket>();
+let lastTranscription: TranscriptionResult | null = null;
+
+function getOsControlState(): OsControlState {
+  return uiBridge.getControlState();
+}
+
+voicePipeline.onTranscription((result) => {
+  lastTranscription = result;
+  broadcast({
+    type: 'STATE_UPDATE',
+    state: machine.getData(),
+    kernelConfig: kernelMixer.getConfig(),
+    osControlState: getOsControlState(),
+    transcription: result,
+    timestamp: Date.now(),
+  });
+});
 
 function broadcast(payload: unknown): void {
   const msg = JSON.stringify(payload);
@@ -71,6 +129,7 @@ async function processHardwareEvent(event: LogiHardwareEvent): Promise<void> {
         timestamp: event.timestamp,
         agentPersona: persona,
       });
+      scheduleDemoTranscription();
       logger.info({ persona }, 'clutch engaged');
       break;
     }
@@ -78,6 +137,7 @@ async function processHardwareEvent(event: LogiHardwareEvent): Promise<void> {
     case 'SYNAPSE_CLUTCH_RELEASE': {
       // Priority 0 Interrupt — HARD STOP
       machine.send({ type: 'CLUTCH_RELEASE' });
+      clearDemoTranscription();
       await voicePipeline.release();
       await uiBridge.release({
         type: 'RELEASE',
@@ -126,10 +186,14 @@ async function processHardwareEvent(event: LogiHardwareEvent): Promise<void> {
 
   broadcast({
     type: 'STATE_UPDATE',
+    synapseType,
+    machineState: machine.getState(),
     state: machine.getData(),
     kernelConfig: kernelMixer.getConfig(),
+    osControlState: getOsControlState(),
     latencyMs,
     timestamp: Date.now(),
+    transcription: lastTranscription,
   });
 }
 
@@ -174,9 +238,12 @@ export function buildServer() {
       socket.send(
         JSON.stringify({
           type: 'STATE_UPDATE',
+          machineState: machine.getState(),
           state: machine.getData(),
           kernelConfig: kernelMixer.getConfig(),
+          osControlState: getOsControlState(),
           timestamp: Date.now(),
+          transcription: lastTranscription,
         }),
       );
 
@@ -228,6 +295,7 @@ export function buildServer() {
           const ts = Date.now();
           const deadPersona = uiBridge.getActivePersona();
           machine.send({ type: 'CLUTCH_RELEASE' });
+          clearDemoTranscription();
           void voicePipeline.release();
           void uiBridge.release({ type: 'RELEASE', timestamp: ts, agentPersona: deadPersona });
         }
