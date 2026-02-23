@@ -32,6 +32,76 @@ interface DaemonMessage {
   machineState?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parsePort(raw: string | null): number | null {
+  if (!raw) return null;
+  const candidate = Number(raw);
+  return Number.isInteger(candidate) && candidate > 0 && candidate <= 65_535
+    ? candidate
+    : null;
+}
+
+const AGENT_PERSONAS = ['CODER', 'NAVIGATOR', 'RESEARCHER'] as const;
+const VOICE_PIPELINE_STATUSES = ['IDLE', 'LISTENING', 'PROCESSING'] as const;
+const OS_CONTROL_OWNERS = ['PHYSICAL_MOUSE', 'JAYU_AGENT'] as const;
+
+function isSynapseState(value: unknown): value is SynapseState {
+  if (!isRecord(value)) return false;
+
+  return (
+    typeof value.isClutchEngaged === 'boolean' &&
+    AGENT_PERSONAS.includes(value.activeAgentContext as (typeof AGENT_PERSONAS)[number]) &&
+    typeof value.computeMixWeight === 'number' &&
+    value.computeMixWeight >= 0 &&
+    value.computeMixWeight <= 1 &&
+    VOICE_PIPELINE_STATUSES.includes(
+      value.voicePipelineStatus as (typeof VOICE_PIPELINE_STATUSES)[number],
+    )
+  );
+}
+
+function isKernelConfig(value: unknown): value is KernelConfig {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.computeMixWeight === 'number' &&
+    value.computeMixWeight >= 0 &&
+    value.computeMixWeight <= 1 &&
+    typeof value.contextWindowTokens === 'number' &&
+    Number.isFinite(value.contextWindowTokens) &&
+    value.contextWindowTokens >= 0 &&
+    typeof value.primaryModel === 'string'
+  );
+}
+
+function isOsControlState(value: unknown): value is OsControlState {
+  if (!isRecord(value)) return false;
+  const handedOffAt = value.handedOffAt;
+  return (
+    OS_CONTROL_OWNERS.includes(value.owner as (typeof OS_CONTROL_OWNERS)[number]) &&
+    AGENT_PERSONAS.includes(value.activePersona as (typeof AGENT_PERSONAS)[number]) &&
+    (handedOffAt === undefined || (typeof handedOffAt === 'number' && handedOffAt > 0))
+  );
+}
+
+function isTranscriptionResult(value: unknown): value is TranscriptionResult {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.transcript === 'string' &&
+    typeof value.isFinal === 'boolean' &&
+    typeof value.confidence === 'number' &&
+    value.confidence >= 0 &&
+    value.confidence <= 1 &&
+    typeof value.durationMs === 'number' &&
+    value.durationMs >= 0 &&
+    typeof value.timestamp === 'number' &&
+    Number.isFinite(value.timestamp) &&
+    value.timestamp > 0
+  );
+}
+
 function buildDaemonWsUrl(raw: string): string {
   const url = new URL(raw);
   if (!url.searchParams.has('role')) url.searchParams.set('role', 'ui');
@@ -65,8 +135,29 @@ function getDaemonWsUrl(): string {
     }
   }
 
+  const envPortOverride = (import.meta as { env?: { VITE_DAEMON_WS_PORT?: unknown } }).env
+    ?.VITE_DAEMON_WS_PORT;
+  const envPortRaw = typeof envPortOverride === 'string' ? envPortOverride : null;
+  const envPort = parsePort(envPortRaw);
+  if (envPortRaw && envPort === null) {
+    console.warn('[synapse-config-ui] Invalid VITE_DAEMON_WS_PORT; falling back to default', {
+      value: envPortRaw,
+    });
+  }
+
+  const portParam = params.get('wsPort');
+  const portFromQuery = parsePort(portParam);
+  if (portParam && portFromQuery === null) {
+    console.warn('[synapse-config-ui] Invalid wsPort query param; falling back to default', {
+      value: portParam,
+    });
+  }
+
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const defaultUrl = `${proto}//${window.location.hostname}:4040/ws`;
+  const host = window.location.hostname || 'localhost';
+  const port = envPort ?? portFromQuery ?? 4040;
+
+  const defaultUrl = `${proto}//${host}:${port}/ws`;
   return buildDaemonWsUrl(defaultUrl);
 }
 
@@ -160,21 +251,64 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
     };
 
     ws.onmessage = (event) => {
-      let msg: DaemonMessage;
+      if (typeof event.data !== 'string') return;
+
+      let parsed: unknown;
       try {
-        msg = JSON.parse(event.data as string) as DaemonMessage;
+        parsed = JSON.parse(event.data);
       } catch {
         return;
       }
 
-      if (msg.type !== 'STATE_UPDATE') return;
-      if (msg.state) setState(msg.state);
-      if (msg.kernelConfig) setKernelConfig(msg.kernelConfig);
-      if (msg.osControlState) setOsControlState(msg.osControlState);
-      if (msg.machineState) setMachineState(msg.machineState);
-      if (msg.synapseType) setSynapseType(msg.synapseType);
-      if (msg.latencyMs !== undefined) setLatencyMs(msg.latencyMs);
-      if (msg.transcription) setTranscription(msg.transcription);
+      if (!isRecord(parsed)) return;
+      if (parsed.type !== 'STATE_UPDATE') return;
+
+      const msg: Record<string, unknown> = parsed;
+
+      if ('state' in msg) {
+        const nextState = msg.state;
+        if (nextState === null) setState(null);
+        else if (isSynapseState(nextState)) setState(nextState);
+      }
+
+      if ('kernelConfig' in msg) {
+        const nextKernelConfig = msg.kernelConfig;
+        if (nextKernelConfig === null) setKernelConfig(null);
+        else if (isKernelConfig(nextKernelConfig)) setKernelConfig(nextKernelConfig);
+      }
+
+      if ('osControlState' in msg) {
+        const nextOsControlState = msg.osControlState;
+        if (nextOsControlState === null) setOsControlState(null);
+        else if (isOsControlState(nextOsControlState)) setOsControlState(nextOsControlState);
+      }
+
+      if ('machineState' in msg) {
+        const nextMachineState = msg.machineState;
+        if (typeof nextMachineState === 'string' || nextMachineState === null) {
+          setMachineState(nextMachineState ?? null);
+        }
+      }
+
+      if ('synapseType' in msg) {
+        const nextSynapseType = msg.synapseType;
+        if (typeof nextSynapseType === 'string' || nextSynapseType === null) {
+          setSynapseType(nextSynapseType ?? null);
+        }
+      }
+
+      if ('latencyMs' in msg) {
+        const nextLatencyMs = msg.latencyMs;
+        if (typeof nextLatencyMs === 'number' || nextLatencyMs === null) {
+          setLatencyMs(nextLatencyMs ?? null);
+        }
+      }
+
+      if ('transcription' in msg) {
+        const nextTranscription = msg.transcription;
+        if (nextTranscription === null) setTranscription(null);
+        else if (isTranscriptionResult(nextTranscription)) setTranscription(nextTranscription);
+      }
     };
   }, [wsUrl]);
 
