@@ -64,7 +64,7 @@ function useDemoState(enabled: boolean): DaemonState {
   const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) return () => undefined;
 
     function setPersona(persona: AgentPersona): void {
       setState((s) => ({ ...s, activeAgentContext: persona }));
@@ -177,13 +177,16 @@ function WaveformCanvas(props: {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const shouldAnimate = active && !mediaQuery.matches;
+    const isBrowser = typeof window !== 'undefined';
+    const mediaQuery = isBrowser && 'matchMedia' in window
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+    const shouldAnimate = active && !(mediaQuery?.matches ?? false);
     let raf = 0;
     let stopped = false;
 
     const resize = () => {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const dpr = isBrowser ? Math.max(1, window.devicePixelRatio || 1) : 1;
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.floor(rect.width * dpr));
       canvas.height = Math.max(1, Math.floor(rect.height * dpr));
@@ -196,7 +199,7 @@ function WaveformCanvas(props: {
 
     const drawFrame = (nowMs: number) => {
       if (stopped) return;
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const dpr = isBrowser ? Math.max(1, window.devicePixelRatio || 1) : 1;
       const w = canvas.width;
       const h = canvas.height;
       const t = nowMs / 1000;
@@ -227,14 +230,14 @@ function WaveformCanvas(props: {
 
       ctx.shadowBlur = 0;
 
-      if (shouldAnimate) raf = window.requestAnimationFrame(drawFrame);
+      if (shouldAnimate && isBrowser) raf = window.requestAnimationFrame(drawFrame);
     };
 
-    raf = window.requestAnimationFrame(drawFrame);
+    if (isBrowser) raf = window.requestAnimationFrame(drawFrame);
 
     return () => {
       stopped = true;
-      window.cancelAnimationFrame(raf);
+      if (isBrowser) window.cancelAnimationFrame(raf);
       ro?.disconnect();
     };
   }, [active, intensity]);

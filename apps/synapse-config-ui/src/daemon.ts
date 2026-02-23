@@ -45,6 +45,7 @@ function buildDaemonWsUrl(raw: string): string {
 }
 
 function getDaemonWsUrl(): string {
+  if (typeof window === 'undefined') return buildDaemonWsUrl('ws://localhost:4040/ws');
   const params = new URLSearchParams(window.location.search);
   const override = params.get('ws');
   const raw = override ?? 'ws://localhost:4040/ws';
@@ -123,6 +124,16 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
       setSynapseType(null);
       setLatencyMs(null);
       setTranscription(null);
+
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+
+      if (reconnectTimeoutRef.current === null) {
+        reconnectTimeoutRef.current = window.setTimeout(connect, 1_750);
+      }
     };
 
     ws.onmessage = (event) => {

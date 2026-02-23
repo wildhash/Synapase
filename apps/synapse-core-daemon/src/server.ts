@@ -144,6 +144,7 @@ async function processHardwareEvent(event: LogiHardwareEvent): Promise<void> {
       // Priority 0 Interrupt — HARD STOP
       machine.send({ type: 'CLUTCH_RELEASE' });
       clearDemoTranscription();
+      lastTranscription = null;
       await voicePipeline.release();
       await uiBridge.release({
         type: 'RELEASE',
@@ -302,6 +303,7 @@ export function buildServer() {
           const deadPersona = uiBridge.getActivePersona();
           machine.send({ type: 'CLUTCH_RELEASE' });
           clearDemoTranscription();
+          lastTranscription = null;
           void voicePipeline.release();
           void uiBridge.release({ type: 'RELEASE', timestamp: ts, agentPersona: deadPersona });
         }
