@@ -313,9 +313,19 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
   }, [wsUrl]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      destroyedRef.current = false;
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      wsRef.current?.close();
+      return;
+    }
 
+    destroyedRef.current = false;
     connect();
+
     return () => {
       destroyedRef.current = true;
       if (reconnectTimeoutRef.current !== null) {
