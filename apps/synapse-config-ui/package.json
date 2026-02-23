@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@synapse/hardware-events": "workspace:*",
+    "@synapse/ui-executor-bridge": "workspace:*",
+    "@synapse/voice-pipeline": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
