@@ -315,14 +315,26 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
   useEffect(() => {
     if (!enabled) {
       destroyedRef.current = false;
+
       if (reconnectTimeoutRef.current !== null) {
         window.clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+
       wsRef.current?.close();
+      wsRef.current = null;
+
+      setConnected(false);
+      setState(null);
+      setKernelConfig(null);
+      setOsControlState(null);
+      setMachineState(null);
+      setSynapseType(null);
+      setLatencyMs(null);
+      setTranscription(null);
+
       return;
     }
-
     destroyedRef.current = false;
     connect();
 
