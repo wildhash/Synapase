@@ -33,28 +33,51 @@ interface DaemonMessage {
 }
 
 function buildDaemonWsUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    if (!url.searchParams.has('role')) url.searchParams.set('role', 'ui');
-    return url.toString();
-  } catch {
-    const fallback = new URL('ws://localhost:4040/ws');
-    fallback.searchParams.set('role', 'ui');
-    return fallback.toString();
-  }
+  const url = new URL(raw);
+  if (!url.searchParams.has('role')) url.searchParams.set('role', 'ui');
+  return url.toString();
 }
 
 function getDaemonWsUrl(): string {
   if (typeof window === 'undefined') return buildDaemonWsUrl('ws://localhost:4040/ws');
+
+  const envOverride = (import.meta as { env?: { VITE_DAEMON_WS_URL?: unknown } }).env
+    ?.VITE_DAEMON_WS_URL;
+  if (typeof envOverride === 'string' && envOverride.length > 0) {
+    try {
+      return buildDaemonWsUrl(envOverride);
+    } catch {
+      console.warn('[synapse-config-ui] Invalid VITE_DAEMON_WS_URL; falling back to default', {
+        value: envOverride,
+      });
+    }
+  }
+
   const params = new URLSearchParams(window.location.search);
   const override = params.get('ws');
-  const raw = override ?? 'ws://localhost:4040/ws';
-  return buildDaemonWsUrl(raw);
+  if (override) {
+    try {
+      return buildDaemonWsUrl(override);
+    } catch {
+      console.warn('[synapse-config-ui] Invalid ws query param; falling back to default', {
+        value: override,
+      });
+    }
+  }
+
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const defaultUrl = `${proto}//${window.location.hostname}:4040/ws`;
+  return buildDaemonWsUrl(defaultUrl);
 }
 
 export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
   const enabled = options?.enabled ?? true;
   const wsUrl = useMemo(() => getDaemonWsUrl(), []);
+
+  const enabledRef = useRef(enabled);
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<SynapseState | null>(null);
@@ -70,7 +93,7 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
   const destroyedRef = useRef(false);
 
   const connect = useCallback(() => {
-    if (!enabled) return;
+    if (!enabledRef.current) return;
     if (destroyedRef.current) return;
 
     if (reconnectTimeoutRef.current !== null) {
@@ -109,7 +132,7 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
       setLatencyMs(null);
       setTranscription(null);
 
-      if (reconnectTimeoutRef.current === null) {
+      if (reconnectTimeoutRef.current === null && enabledRef.current) {
         reconnectTimeoutRef.current = window.setTimeout(connect, 1_750);
       }
     };
@@ -131,7 +154,7 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
         // ignore
       }
 
-      if (reconnectTimeoutRef.current === null) {
+      if (reconnectTimeoutRef.current === null && enabledRef.current) {
         reconnectTimeoutRef.current = window.setTimeout(connect, 1_750);
       }
     };
@@ -153,7 +176,7 @@ export function useDaemonWs(options?: { enabled?: boolean }): DaemonState {
       if (msg.latencyMs !== undefined) setLatencyMs(msg.latencyMs);
       if (msg.transcription) setTranscription(msg.transcription);
     };
-  }, [enabled, wsUrl]);
+  }, [wsUrl]);
 
   useEffect(() => {
     if (!enabled) return;

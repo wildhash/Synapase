@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SynapseState } from '@synapse/hardware-events';
-import type { TranscriptionResult } from '@synapse/voice-pipeline';
-import type { AgentPersona, OsControlState } from '@synapse/ui-executor-bridge';
-import type { DaemonState, KernelConfig } from './daemon';
+import type { AgentPersona } from '@synapse/ui-executor-bridge';
+import type { DaemonState } from './daemon';
 import { useDaemonWs } from './daemon';
+import { useDemoDaemonState } from './demoDaemon';
 
 type TerminalLine = {
   ts: number;
   text: string;
+};
+
+type TerminalSnapshot = {
+  connected: boolean;
+  osOwner: 'PHYSICAL_MOUSE' | 'JAYU_AGENT';
+  synapseType: string | null;
+  transcriptionText: string | null;
+  computeMix: number;
+  contextTokens: number;
+  persona: string | null;
 };
 
 function pad2(value: number): string {
@@ -40,127 +50,62 @@ function cx(...classes: Array<string | null | undefined | false>): string {
   return classes.filter(Boolean).join(' ');
 }
 
-function useDemoState(enabled: boolean): DaemonState {
-  const [state, setState] = useState<SynapseState>({
-    isClutchEngaged: false,
-    activeAgentContext: 'CODER',
-    computeMixWeight: 0.36,
-    voicePipelineStatus: 'IDLE',
-  });
+function buildTerminalAdditions(
+  prev: TerminalSnapshot,
+  next: TerminalSnapshot,
+  now: number,
+  demoEnabled: boolean,
+): TerminalLine[] {
+  const additions: TerminalLine[] = [];
 
-  const [kernelConfig, setKernelConfig] = useState<KernelConfig>({
-    computeMixWeight: 0.36,
-    contextWindowTokens: 32_000,
-    primaryModel: 'claude-3.5-sonnet',
-  });
+  if (next.connected !== prev.connected) {
+    additions.push({
+      ts: now,
+      text: next.connected
+        ? demoEnabled
+          ? 'UI overlay connected (demo mode)'
+          : 'UI overlay connected'
+        : 'UI overlay disconnected',
+    });
+  }
 
-  const [osControlState, setOsControlState] = useState<OsControlState>({
-    owner: 'PHYSICAL_MOUSE',
-    activePersona: 'CODER',
-  });
+  if (next.osOwner !== prev.osOwner) {
+    additions.push({
+      ts: now,
+      text: next.osOwner === 'JAYU_AGENT' ? 'OS_CONTROL_OWNER=JAYU_AGENT' : 'OS_CONTROL_OWNER=HUMAN',
+    });
+  }
 
-  const [machineState, setMachineState] = useState<string>('IDLE');
-  const [synapseType, setSynapseType] = useState<string | null>(null);
-  const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
+  if (next.synapseType && next.synapseType !== prev.synapseType) {
+    additions.push({ ts: now, text: `EVENT=${next.synapseType}` });
+  }
 
-  useEffect(() => {
-    if (!enabled) return () => undefined;
+  if (next.transcriptionText && next.transcriptionText !== prev.transcriptionText) {
+    additions.push({
+      ts: now,
+      text: `VOICE_TRANSCRIPT=${next.transcriptionText}`,
+    });
+  }
 
-    function setPersona(persona: AgentPersona): void {
-      setState((s) => ({ ...s, activeAgentContext: persona }));
-      setOsControlState((s) => ({ ...s, activePersona: persona }));
-      setSynapseType('SYNAPSE_KEYPAD_CONTEXT_SWITCH');
-    }
+  if (Math.abs(next.computeMix - prev.computeMix) > 0.001) {
+    additions.push({
+      ts: now,
+      text: `KERNEL_COMPUTE_MIX=${Math.round(next.computeMix * 100)}%_CLOUD`,
+    });
+  }
 
-    function toggleClutch(): void {
-      setState((s) => {
-        const engaged = !s.isClutchEngaged;
-        setSynapseType(engaged ? 'SYNAPSE_CLUTCH_ENGAGE' : 'SYNAPSE_CLUTCH_RELEASE');
-        setMachineState(engaged ? 'CLUTCH_ENGAGED' : 'IDLE');
-        setOsControlState((o) => ({
-          owner: engaged ? 'JAYU_AGENT' : 'PHYSICAL_MOUSE',
-          handedOffAt: engaged ? Date.now() : undefined,
-          activePersona: o.activePersona,
-        }));
-        return {
-          ...s,
-          isClutchEngaged: engaged,
-          voicePipelineStatus: engaged ? 'LISTENING' : 'IDLE',
-        };
-      });
-    }
+  if (next.contextTokens && next.contextTokens !== prev.contextTokens) {
+    additions.push({
+      ts: now,
+      text: `KERNEL_CONTEXT_WINDOW=${formatTokens(next.contextTokens)}`,
+    });
+  }
 
-    function adjustCompute(delta: number): void {
-      setState((s) => {
-        const next = clamp01(s.computeMixWeight + delta);
-        setSynapseType('SYNAPSE_DIAL_COMPUTE_MIX');
-        setKernelConfig((k) => ({ ...k, computeMixWeight: next }));
-        return { ...s, computeMixWeight: next };
-      });
-    }
+  if (next.persona && next.persona !== prev.persona) {
+    additions.push({ ts: now, text: `PERSONA_SWITCH=${next.persona}` });
+  }
 
-    function adjustContext(delta: number): void {
-      setKernelConfig((k) => {
-        const next = Math.min(128_000, Math.max(8_000, k.contextWindowTokens + delta));
-        setSynapseType('SYNAPSE_DIAL_CONTEXT_WINDOW');
-        return { ...k, contextWindowTokens: next };
-      });
-    }
-
-    function triggerTranscription(): void {
-      if (!state.isClutchEngaged) return;
-      setSynapseType('VOICE_TRANSCRIPTION');
-      setTranscription({
-        transcript: 'Navigate to the repository and initialize a new branch.',
-        isFinal: true,
-        confidence: 0.95,
-        durationMs: 780,
-        timestamp: Date.now(),
-      });
-      setState((s) => ({ ...s, voicePipelineStatus: 'PROCESSING' }));
-      setMachineState('VOICE_ACTIVE');
-    }
-
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-      ) {
-        return;
-      }
-
-      if (e.key === ' ') {
-        e.preventDefault();
-        toggleClutch();
-        return;
-      }
-
-      if (e.key === '1') return setPersona('CODER');
-      if (e.key === '2') return setPersona('NAVIGATOR');
-      if (e.key === '3') return setPersona('RESEARCHER');
-
-      if (e.key === 'ArrowLeft') return adjustCompute(-0.05);
-      if (e.key === 'ArrowRight') return adjustCompute(0.05);
-      if (e.key === 'ArrowDown') return adjustContext(-8_000);
-      if (e.key === 'ArrowUp') return adjustContext(8_000);
-      if (e.key.toLowerCase() === 't') return triggerTranscription();
-    };
-
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [enabled, state.isClutchEngaged]);
-
-  return {
-    connected: enabled,
-    state,
-    kernelConfig,
-    osControlState,
-    machineState,
-    synapseType,
-    latencyMs: 0,
-    transcription,
-  };
+  return additions;
 }
 
 function WaveformCanvas(props: {
@@ -169,6 +114,11 @@ function WaveformCanvas(props: {
 }): JSX.Element {
   const { active, intensity } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const intensityRef = useRef(intensity);
+
+  useEffect(() => {
+    intensityRef.current = intensity;
+  }, [intensity]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -208,7 +158,7 @@ function WaveformCanvas(props: {
 
       const center = h / 2;
       const base = h * 0.055;
-      const amp = base + h * 0.28 * clamp01(intensity);
+      const amp = base + h * 0.28 * clamp01(intensityRef.current);
 
       ctx.lineWidth = 2 * dpr;
       ctx.strokeStyle = 'rgba(41, 182, 255, 0.92)';
@@ -240,7 +190,7 @@ function WaveformCanvas(props: {
       if (isBrowser) window.cancelAnimationFrame(raf);
       ro?.disconnect();
     };
-  }, [active, intensity]);
+  }, [active]);
 
   return <canvas className="waveCanvas" ref={canvasRef} />;
 }
@@ -261,8 +211,8 @@ function App(): JSX.Element {
   }, []);
   const demoEnabled = params.get('demo') === '1';
 
-  const daemon = useDaemonWs({ enabled: !demoEnabled });
-  const demo = useDemoState(demoEnabled);
+  const daemon: DaemonState = useDaemonWs({ enabled: !demoEnabled });
+  const demo: DaemonState = useDemoDaemonState(demoEnabled);
 
   const {
     connected,
@@ -292,78 +242,27 @@ function App(): JSX.Element {
     },
   ]);
 
-  const lastSeenRef = useRef({
-    connected: false,
-    osOwner: osOwner,
-    synapseType: null as string | null,
-    transcription: null as TranscriptionResult | null,
-    computeMix: computeMix,
-    contextTokens: contextTokens,
-    persona: persona,
-  });
+  const lastSeenRef = useRef<TerminalSnapshot | null>(null);
 
   useEffect(() => {
     const now = Date.now();
-    const prior = lastSeenRef.current;
-    const next: typeof prior = {
+    const next: TerminalSnapshot = {
       connected,
       osOwner,
       synapseType,
-      transcription,
+      transcriptionText: transcription?.transcript ?? null,
       computeMix,
       contextTokens,
       persona,
     };
 
-    const additions: TerminalLine[] = [];
-
-    if (connected !== prior.connected) {
-      additions.push({
-        ts: now,
-        text: connected
-          ? demoEnabled
-            ? 'UI overlay connected (demo mode)'
-            : 'UI overlay connected'
-          : 'UI overlay disconnected',
-      });
+    const prior = lastSeenRef.current;
+    if (!prior) {
+      lastSeenRef.current = next;
+      return;
     }
 
-    if (osOwner !== prior.osOwner) {
-      additions.push({
-        ts: now,
-        text: osOwner === 'JAYU_AGENT' ? 'OS_CONTROL_OWNER=JAYU_AGENT' : 'OS_CONTROL_OWNER=HUMAN',
-      });
-    }
-
-    if (synapseType && synapseType !== prior.synapseType) {
-      additions.push({ ts: now, text: `EVENT=${synapseType}` });
-    }
-
-    if (transcription && transcription !== prior.transcription) {
-      additions.push({
-        ts: now,
-        text: `VOICE_TRANSCRIPT=${transcription.transcript}`,
-      });
-    }
-
-    if (Math.abs(computeMix - prior.computeMix) > 0.001) {
-      additions.push({
-        ts: now,
-        text: `KERNEL_COMPUTE_MIX=${Math.round(computeMix * 100)}%_CLOUD`,
-      });
-    }
-
-    if (contextTokens && contextTokens !== prior.contextTokens) {
-      additions.push({
-        ts: now,
-        text: `KERNEL_CONTEXT_WINDOW=${formatTokens(contextTokens)}`,
-      });
-    }
-
-    if (persona && persona !== prior.persona) {
-      additions.push({ ts: now, text: `PERSONA_SWITCH=${persona}` });
-    }
-
+    const additions = buildTerminalAdditions(prior, next, now, demoEnabled);
     if (additions.length > 0) {
       setTerminalLines((lines) => {
         const merged = [...lines, ...additions];

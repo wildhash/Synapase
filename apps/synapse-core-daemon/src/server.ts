@@ -34,12 +34,14 @@ const DEMO_TRANSCRIPTION_ENABLED =
   process.env['NODE_ENV'] !== 'production' &&
   process.env['SYNAPSE_DEMO_TRANSCRIPTION'] === '1';
 let demoTranscriptionTimeouts: Array<NodeJS.Timeout> = [];
+let demoTranscriptionSessionId = 0;
 
 if (DEMO_TRANSCRIPTION_ENABLED) {
   logger.warn('SYNAPSE_DEMO_TRANSCRIPTION enabled: emitting synthetic transcriptions');
 }
 
 function clearDemoTranscription(): void {
+  demoTranscriptionSessionId += 1;
   for (const t of demoTranscriptionTimeouts) clearTimeout(t);
   demoTranscriptionTimeouts = [];
 }
@@ -47,6 +49,7 @@ function clearDemoTranscription(): void {
 function scheduleDemoTranscription(): void {
   if (!DEMO_TRANSCRIPTION_ENABLED) return;
   clearDemoTranscription();
+  const sessionId = demoTranscriptionSessionId;
 
   const partialDelayMs = 220;
   const finalDelayMs = 540;
@@ -54,12 +57,16 @@ function scheduleDemoTranscription(): void {
 
   demoTranscriptionTimeouts.push(
     setTimeout(() => {
+      if (sessionId !== demoTranscriptionSessionId) return;
+      if (machine.getState() !== 'CLUTCH_ENGAGED') return;
       voicePipeline.simulateTranscription('Navigate to the repository and initialize', false);
     }, partialDelayMs),
   );
 
   demoTranscriptionTimeouts.push(
     setTimeout(() => {
+      if (sessionId !== demoTranscriptionSessionId) return;
+      if (machine.getState() !== 'CLUTCH_ENGAGED') return;
       voicePipeline.simulateTranscription(
         'Navigate to the repository and initialize a new branch.',
         true,
@@ -69,6 +76,7 @@ function scheduleDemoTranscription(): void {
 
   demoTranscriptionTimeouts.push(
     setTimeout(() => {
+      if (sessionId !== demoTranscriptionSessionId) return;
       if (machine.getState() === 'CLUTCH_ENGAGED') {
         machine.send({ type: 'VOICE_READY' });
       }
@@ -78,6 +86,7 @@ function scheduleDemoTranscription(): void {
 
 // Connected WebSocket clients (Logi plugin + config UI)
 const clients = new Set<WebSocket>();
+const pluginClients = new Set<WebSocket>();
 let lastTranscription: TranscriptionResult | null = null;
 
 function getOsControlState(): OsControlState {
@@ -236,6 +245,7 @@ export function buildServer() {
       }
 
       clients.add(socket);
+      if (canSendEvents) pluginClients.add(socket);
       logger.info({ clientCount: clients.size, role }, 'client connected');
 
       let inboundEventQueue: Promise<void> = Promise.resolve();
@@ -294,10 +304,11 @@ export function buildServer() {
         inboundEventQueue = Promise.resolve();
 
         clients.delete(socket);
+        pluginClients.delete(socket);
         logger.info({ clientCount: clients.size, role }, 'client disconnected');
 
-        // Dead-man switch: if all clients disconnected, release clutch
-        if (clients.size === 0 && machine.getData().isClutchEngaged) {
+        // Dead-man switch: if the hardware plugin drops while clutch is engaged, release
+        if (pluginClients.size === 0 && machine.getData().isClutchEngaged) {
           logger.warn('dead-man switch triggered — releasing clutch');
           const ts = Date.now();
           const deadPersona = uiBridge.getActivePersona();
@@ -306,6 +317,17 @@ export function buildServer() {
           lastTranscription = null;
           void voicePipeline.release();
           void uiBridge.release({ type: 'RELEASE', timestamp: ts, agentPersona: deadPersona });
+
+          broadcast({
+            type: 'STATE_UPDATE',
+            synapseType: 'DEAD_MAN_CLUTCH_RELEASE',
+            machineState: machine.getState(),
+            state: machine.getData(),
+            kernelConfig: kernelMixer.getConfig(),
+            osControlState: getOsControlState(),
+            timestamp: ts,
+            transcription: lastTranscription,
+          });
         }
       });
     });
